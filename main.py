@@ -17,7 +17,7 @@ def load_data():
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
-        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='cp949')
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='utf-8')
         # [수정된 부분] 파일 이름을 'seoul_gu.geojson'으로 변경
         with open('seoul_gu.geojson', 'r', encoding='utf-8') as f:
             seoul_gu_geo = json.load(f)
