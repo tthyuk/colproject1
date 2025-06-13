@@ -59,23 +59,26 @@ merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
 
 # --- [핵심 수정] 좌표 데이터 병합 ---
-geo_to_merge = geo_seoul_df[['행정동_코드_명', 'latitude', 'longitude']]
 
-# 1. (데이터 이름 불일치 문제 해결) 임시 표준화 컬럼 생성
-#    먼저 .astype(str)로 타입을 문자열로 변환한 후, .str.replace()로 이름을 표준화합니다.
-#    이 순서가 바뀌면 'AttributeError'가 발생합니다.
+# 1. 각 데이터프레임에 표준화된 행정동 이름 컬럼을 생성합니다.
 merged_df['행정동_코드_명_표준'] = merged_df['행정동_코드_명'].astype(str).str.replace(r'(\.|\d+|제|본$)', '', regex=True).str.strip()
-geo_to_merge['행정동_코드_명_표준'] = geo_to_merge['행정동_코드_명'].astype(str).str.replace(r'(\.|\d+|제|본$)', '', regex=True).str.strip()
+geo_seoul_df['행정동_코드_명_표준'] = geo_seoul_df['행정동_코드_명'].astype(str).str.replace(r'(\.|\d+|제|본$)', '', regex=True).str.strip()
 
-# 2. 표준화된 '행정동_코드_명_표준'을 기준으로 merge를 수행합니다.
+# 2. merge할 오른쪽 데이터프레임(geo_to_merge)을 재구성합니다.
+#    **중요**: 중복되는 '행정동_코드_명' 컬럼을 제외하고, 병합에 필요한 컬럼만 선택합니다.
+#    이렇게 하면 merge 시 '_x', '_y' 접미사가 붙는 것을 방지할 수 있습니다.
+geo_to_merge = geo_seoul_df[['행정동_코드_명_표준', 'latitude', 'longitude']]
+
+# 3. 표준화된 키를 기준으로 merge를 수행합니다.
 merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명_표준', how='left')
 
-# 3. merge에 사용한 임시 컬럼은 삭제하여 데이터를 깔끔하게 유지합니다.
+# 4. merge에 사용한 임시 컬럼은 삭제하여 데이터를 깔끔하게 유지합니다.
 merged_df.drop(columns=['행정동_코드_명_표준'], inplace=True)
 
 
 # --- 행정동 검색 기능 ---
 st.sidebar.divider()
+# 이제 '행정동_코드_명' 컬럼이 정상적으로 존재하므로 에러가 발생하지 않습니다.
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
