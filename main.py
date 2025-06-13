@@ -12,47 +12,41 @@ def load_data():
 
 store_df, pop_df = load_data()
 
-# 앱 제목
-st.title("서울시 상권 분석 대시보드")
+# 커피-음료 업종 필터링
+coffee_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
 
-# 기능 선택
-tab = st.sidebar.selectbox("분석 항목 선택", ["업종 vs 유동인구 상관관계", "지역별 개업/폐업 현황", "유동인구 상위 지역"])
+# 병합
+merged = pd.merge(coffee_df, pop_df, on=["기준_년분기_코드", "행정동_코드", "행정동_코드_명"])
 
-# 1. 업종 vs 유동인구 상관관계
-if tab == "업종 vs 유동인구 상관관계":
-    selected_industry = st.selectbox("업종 선택", store_df["서비스_업종_코드_명"].unique())
+# 최신 분기 기준
+latest_quarter = merged["기준_년분기_코드"].max()
+merged_latest = merged[merged["기준_년분기_코드"] == latest_quarter]
 
-    filtered_store = store_df[store_df["서비스_업종_코드_명"] == selected_industry]
-    merged = pd.merge(filtered_store, pop_df, on=["기준_년분기_코드", "행정동_코드", "행정동_코드_명"])
+st.title("☕ 커피-음료 업종 분석 대시보드")
+st.subheader(f"📈 행정동별 점포 수 vs 유동 인구 수 (기준 분기: {latest_quarter})")
 
-    if not merged.empty:
-        corr, _ = pearsonr(merged["점포_수"], merged["총_유동인구_수"])
-        st.write(f"**피어슨 상관계수 (점포 수 vs 유동 인구 수):** {corr:.3f}")
+# 상관관계 계산
+if not merged_latest.empty:
+    corr, _ = pearsonr(merged_latest["총_유동인구_수"], merged_latest["점포_수"])
+    st.markdown(f"**피어슨 상관계수:** {corr:.3f} (점포 수 vs 유동 인구 수)")
 
-        fig = px.scatter(merged, x="총_유동인구_수", y="점포_수", hover_name="행정동_코드_명",
-                         title=f"{selected_industry} 업종 - 점포 수 vs 유동 인구 수")
-        st.plotly_chart(fig)
-    else:
-        st.warning("해당 업종의 데이터가 없습니다.")
+    # 산점도 시각화
+    fig_scatter = px.scatter(
+        merged_latest,
+        x="총_유동인구_수",
+        y="점포_수",
+        text="행정동_코드_명",
+        labels={"총_유동인구_수": "총 유동 인구 수", "점포_수": "커피-음료 점포 수"},
+        title="유동 인구 수 대비 커피-음료 점포 수 분포"
+    )
+    fig_scatter.update_traces(textposition="top center")
+    st.plotly_chart(fig_scatter, use_container_width=True)
 
-# 2. 지역별 개업/폐업 현황
-elif tab == "지역별 개업/폐업 현황":
-    region = st.selectbox("행정동 선택", store_df["행정동_코드_명"].unique())
-    region_data = store_df[store_df["행정동_코드_명"] == region]
+    # 바 차트: 행정동별 점포 수
+    st.subheader("🏙 행정동별 커피-음료 점포 수 상위 지역")
+    top_stores = merged_latest.sort_values(by="점포_수", ascending=False).head(15)
+    fig_bar = px.bar(top_stores, x="행정동_코드_명", y="점포_수", title="커피-음료 점포 수 상위 15개 지역")
+    st.plotly_chart(fig_bar, use_container_width=True)
 
-    if not region_data.empty:
-        fig = px.bar(region_data, x="서비스_업종_코드_명", y=["개업_점포_수", "폐업_점포_수"],
-                     barmode="group", title=f"{region} 업종별 개업/폐업 현황")
-        st.plotly_chart(fig)
-    else:
-        st.warning("선택한 지역에 데이터가 없습니다.")
-
-# 3. 유동인구 상위 지역
-elif tab == "유동인구 상위 지역":
-    top_n = st.slider("상위 지역 수", 5, 30, 10)
-    latest_quarter = pop_df["기준_년분기_코드"].max()
-    top_regions = pop_df[pop_df["기준_년분기_코드"] == latest_quarter].nlargest(top_n, "총_유동인구_수")
-
-    fig = px.bar(top_regions, x="행정동_코드_명", y="총_유동인구_수",
-                 title=f"{latest_quarter} 유동인구 상위 {top_n}개 지역")
-    st.plotly_chart(fig)
+else:
+    st.warning("데이터가 부족합니다.")
