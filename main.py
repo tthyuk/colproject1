@@ -8,27 +8,42 @@ st.set_page_config(layout="wide")
 # --- 데이터 로딩 (캐싱 사용) ---
 @st.cache_data
 def load_data():
-    """점포, 유동인구, 매출 데이터를 로드하고 커피 업종만 필터링합니다."""
+    """점포, 유동인구, 매출, 좌표 데이터를 로드하고 커피 업종만 필터링합니다.""" # [수정] docstring 업데이트
     try:
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
+        # --- [추가] 좌표 데이터 로딩 ---
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='euc-kr')
+
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
-        return None, None, None
+        # [수정] 반환 값 개수 맞추기
+        return None, None, None, None
     
     coffee_store_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
     coffee_sales_df = sales_df[sales_df["서비스_업종_코드_명"] == "커피-음료"]
     
-    return coffee_store_df, pop_df, coffee_sales_df
+    # [수정] geo_df 반환 추가
+    return coffee_store_df, pop_df, coffee_sales_df, geo_df
 
-coffee_df, pop_df, sales_df = load_data()
+# [수정] geo_df 추가
+coffee_df, pop_df, sales_df, geo_df = load_data()
 
-if coffee_df is None or pop_df is None or sales_df is None:
+# [수정] geo_df None 체크 추가
+if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
     st.stop()
 
 # --- 데이터 전처리 ---
 pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
+
+# --- [추가] 좌표 데이터 전처리 ---
+# 1. 서울시 데이터만 필터링
+geo_seoul_df = geo_df[geo_df['시도'] == '서울특별시'].copy()
+# 2. 분석 데이터와 병합(merge)하기 위해 '읍/면/리/동' 컬럼명을 '행정동_코드_명'으로 변경
+geo_seoul_df.rename(columns={'읍/면/리/동': '행정동_코드_명'}, inplace=True)
+# 3. st.map에서 사용할 위도(latitude), 경도(longitude) 컬럼명으로 변경
+geo_seoul_df.rename(columns={'위도': 'latitude', '경도': 'longitude'}, inplace=True)
 
 
 # --- 사이드바 ---
@@ -51,32 +66,35 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
+# --- [추가] 좌표 데이터 병합 ---
+# 필요한 컬럼만 선택하여 병합
+geo_to_merge = geo_seoul_df[['행정동_코드_명', 'latitude', 'longitude']]
+# left join을 사용하여, 상권 데이터에 있는 모든 행정동을 유지
+merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명', how='left')
 
-# --- [개선된 부분] 행정동 검색 기능 ---
+
+# --- 행정동 검색 기능 ---
 st.sidebar.divider()
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 
-# 1. 텍스트 입력으로 검색어 받기
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
 
-# 2. 검색어로 목록 필터링
 if search_term:
     filtered_dong_list = [dong for dong in full_dong_list if search_term in dong]
 else:
     filtered_dong_list = full_dong_list
 
-# 3. 필터링된 목록을 Selectbox에 표시 (항상 '전체' 옵션 포함)
 display_list = ["전체"] + filtered_dong_list
 selected_dong = st.sidebar.selectbox(
     "행정동을 선택하세요", 
     display_list,
     help="찾고 싶은 동 이름을 위 검색창에 입력하면 목록이 줄어듭니다."
 )
-# --- 행정동 검색 기능 끝 ---
 
 
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
+    # (이 부분은 변경 없음)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -118,7 +136,6 @@ else:
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
-    # (이하 상세 분석 코드는 이전과 동일)
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
@@ -130,6 +147,22 @@ else:
     sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
     col4.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
     st.divider()
+
+    # --- [추가] 지도 표시 기능 ---
+    st.subheader("📍 위치 정보")
+    # 좌표 데이터가 있는지 확인 (결측치(NaN)가 아닌지 검사)
+    if pd.notna(dong_data['latitude']) and pd.notna(dong_data['longitude']):
+        # st.map은 latitude, longitude 컬럼을 가진 DataFrame을 인자로 받음
+        map_data = pd.DataFrame({
+            'latitude': [dong_data['latitude']],
+            'longitude': [dong_data['longitude']]
+        })
+        st.map(map_data, zoom=14) # zoom 레벨을 조절하여 확대/축소 가능
+    else:
+        st.warning("해당 행정동의 위치 좌표를 찾을 수 없습니다.")
+    st.divider()
+    # --- 지도 표시 기능 끝 ---
+
 
     st.subheader("📊 유동인구 vs 매출 비교 분석")
     tab_age, tab_gender, tab_time, tab_day = st.tabs(["연령대별", "성별", "시간대별", "요일별"])
