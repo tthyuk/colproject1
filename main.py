@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import folium # 지도 라이브러리
+from streamlit_folium import st_folium # Streamlit에서 folium을 사용하기 위한 라이브러리
 
 # 페이지 레이아웃을 넓게 사용하도록 설정
 st.set_page_config(layout="wide")
@@ -35,7 +37,6 @@ if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
 pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
 geo_df = geo_df[['행정동_코드_명', '위도', '경도']]
 
-
 # --- 사이드바 ---
 st.sidebar.title("🔍 분석 조건 설정")
 
@@ -57,7 +58,6 @@ merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, geo_df, on='행정동_코드_명', how='left')
 
-
 # --- 행정동 검색 기능 ---
 st.sidebar.divider()
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
@@ -77,10 +77,8 @@ selected_dong = st.sidebar.selectbox(
 )
 # --- 행정동 검색 기능 끝 ---
 
-
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
-    # (전체 분석 코드는 변경 없음)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -125,59 +123,40 @@ else:
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
-    # [수정된 부분] Plotly를 이용한 지도 표시 기능
-    st.subheader("📍 행정동 위치")
-    if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
-        # Mapbox 토큰 설정 (Streamlit Secrets에서 가져오기)
-        try:
-            px.set_mapbox_access_token(st.secrets["MAPBOX_TOKEN"])
+    # [수정된 부분] 주요 지표와 지도를 st.columns를 이용해 나란히 배치
+    st.subheader("⭐ 주요 지표 및 위치")
+    col1, col2 = st.columns([2, 1]) # 2:1 비율로 컬럼 분할
+
+    with col1: # 왼쪽 컬럼 (주요 지표)
+        c1, c2 = st.columns(2)
+        c1.metric("☕ 점포 수", f"{int(dong_data['점포_수'])}개")
+        c2.metric("🚶 총 유동인구", f"{int(dong_data['총_유동인구_수']):,}명")
+        c1.metric("💰 총 매출액", f"{dong_data['당월_매출_금액']:,.0f} 원")
+        sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
+        c2.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
+
+    with col2: # 오른쪽 컬럼 (지도)
+        if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
+            lat, lon = dong_data['위도'], dong_data['경도']
             
-            map_data = pd.DataFrame({
-                'lat': [dong_data['위도']],
-                'lon': [dong_data['경도']],
-                'name': [dong_data['행정동_코드_명']]
-            })
+            # folium 지도를 생성
+            m = folium.Map(location=[lat, lon], zoom_start=15)
+            
+            # 마커(Marker)에 popup(클릭 시 표시되는 메시지)으로 행정동 이름 표시
+            folium.Marker(
+                [lat, lon], 
+                popup=folium.Popup(f'<b>{selected_dong}</b>', max_width=200),
+                tooltip=selected_dong # 마우스를 올렸을 때 표시되는 툴팁
+            ).add_to(m)
 
-            fig = px.scatter_mapbox(
-                map_data,
-                lat="lat",
-                lon="lon",
-                text="name", # 지도에 표시될 텍스트
-                zoom=13,
-                height=400,
-                mapbox_style="carto-positron" # 지도 스타일
-            )
-            # 텍스트가 잘 보이도록 마커 스타일 조정
-            fig.update_traces(marker_size=10, marker_opacity=0.7)
-            # 텍스트 위치 및 레이아웃 여백 조정
-            fig.update_layout(
-                textfont=dict(size=14, color='black'),
-                margin={"r":0,"t":20,"l":0,"b":0},
-                mapbox=dict(
-                    center=dict(lat=dong_data['위도'], lon=dong_data['경도'])
-                )
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        except Exception as e:
-            st.error(f"지도 표시 중 오류가 발생했습니다. Mapbox 토큰이 올바르게 설정되었는지 확인해주세요. (오류: {e})")
-    else:
-        st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
-    # [수정된 부분 끝]
-
-    st.divider()
-
-    st.subheader("⭐ 주요 지표")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("☕ 점포 수", f"{int(dong_data['점포_수'])}개")
-    col2.metric("🚶 총 유동인구", f"{int(dong_data['총_유동인구_수']):,}명")
-    col3.metric("💰 총 매출액", f"{dong_data['당월_매출_금액']:,.0f} 원")
-    sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
-    col4.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
+            # Streamlit에 folium 지도 표시
+            st_folium(m, use_container_width=True, height=250)
+        else:
+            st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
+    
     st.divider()
 
     st.subheader("📊 유동인구 vs 매출 비교 분석")
-    # (이하 상세 분석 차트 코드는 변경 없음)
     tab_age, tab_gender, tab_time, tab_day = st.tabs(["연령대별", "성별", "시간대별", "요일별"])
     
     def get_grouped_data(prefix, pop_cols, sales_cols):
