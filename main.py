@@ -18,12 +18,10 @@ def load_data():
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
         geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='utf-8')
-        # [수정된 부분] 파일 이름을 'seoul_gu.geojson'으로 변경
         with open('seoul_gu.geojson', 'r', encoding='utf-8') as f:
             seoul_gu_geo = json.load(f)
 
     except FileNotFoundError as e:
-        # [수정된 부분] 에러 메시지의 파일 이름도 함께 변경
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. seoul_gu.geojson 파일도 다운로드했는지 확인해주세요.")
         return None, None, None, None, None
     except UnicodeDecodeError:
@@ -132,7 +130,9 @@ else:
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
     st.subheader("⭐ 주요 지표 및 위치")
-    col1, col2 = st.columns([2, 1])
+    
+    # [수정된 부분] 가로 비율을 [2, 1]에서 [3, 2]로 변경하여 지도의 가로 공간을 넓힘
+    col1, col2 = st.columns([3, 2])
 
     with col1:
         c1, c2 = st.columns(2)
@@ -171,7 +171,8 @@ else:
                 tooltip=selected_dong
             ).add_to(m)
 
-            st_folium(m, use_container_width=True, height=200)
+            # [수정된 부분] 지도의 세로 높이를 200에서 250으로 늘림
+            st_folium(m, use_container_width=True, height=250)
         else:
             st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
 
