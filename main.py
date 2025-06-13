@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from scipy.stats import pearsonr
 
 # 페이지 레이아웃을 넓게 사용하도록 설정
 st.set_page_config(layout="wide")
@@ -28,11 +27,11 @@ coffee_df, pop_df, sales_df = load_data()
 if coffee_df is None or pop_df is None or sales_df is None:
     st.stop()
 
-# --- 데이터 전처리: 전체 분석용 데이터 생성 ---
+# --- 데이터 전처리 ---
 pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
 
 
-# --- 사이드바: 사용자 입력 ---
+# --- 사이드바 ---
 st.sidebar.title("🔍 분석 조건 설정")
 
 def format_quarter(quarter_code):
@@ -42,13 +41,13 @@ def format_quarter(quarter_code):
 available_quarters = sorted(coffee_df['기준_년분기_코드'].unique(), reverse=True)
 selected_quarter = st.sidebar.selectbox("분기를 선택하세요", available_quarters, format_func=format_quarter)
 
-# --- 선택된 분기에 대한 데이터 필터링 및 병합 ---
+# --- 분기별 데이터 필터링 및 병합 ---
+merge_keys = ['행정동_코드', '행정동_코드_명']
 coffee_quarter_df = coffee_df[coffee_df['기준_년분기_코드'] == selected_quarter]
 pop_agg_quarter_df = pop_agg_df[pop_agg_df['기준_년분기_코드'] == selected_quarter]
 sales_quarter_df = sales_df[sales_df['기준_년분기_코드'] == selected_quarter]
 pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 
-merge_keys = ['행정동_코드', '행정동_코드_명']
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
@@ -62,38 +61,38 @@ if selected_dong == "전체":
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
     if not merged_df.empty:
-        # [추가된 부분] 점포당 평균 매출액 컬럼 생성
+        # '점포당 매출액' 컬럼 생성 (0으로 나누기 오류 방지)
         merged_df['점포당_매출액'] = merged_df['당월_매출_금액'] / merged_df['점포_수'].replace(0, 1)
-
-        # 2x2 그리드로 차트 재배치
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("점포 수 vs 유동인구")
-            fig = px.scatter(merged_df, x="총_유동인구_수", y="점포_수", hover_name="행정동_코드_명", size='점포_수', color='점포_수',
-                             labels={"총_유동인구_수": "총 유동인구 수", "점포_수": "점포 수"})
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col2:
-            # [추가된 부분] 점포 수 대비 매출액 산점도
-            st.subheader("점포 수 vs 매출액")
-            fig = px.scatter(merged_df, x="점포_수", y="당월_매출_금액", hover_name="행정동_코드_명", size='당월_매출_금액', color='점포당_매출액',
-                             color_continuous_scale='Plasma',
-                             labels={"점포_수": "점포 수", "당월_매출_금액": "당월 매출 금액 (원)"},
-                             hover_data={'점포당_매출액': ':,.0f'})
-            st.plotly_chart(fig, use_container_width=True)
         
-        with st.expander("📊 순위 차트 더 보기"):
-            col3, col4 = st.columns(2)
+        tab1, tab2 = st.tabs(["📊 종합 비교", "🏆 순위 비교"])
+
+        with tab1:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("점포 수 vs 유동인구")
+                fig = px.scatter(merged_df, x="총_유동인구_수", y="점포_수", hover_name="행정동_코드_명", size='점포_수', color='점포_수')
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.subheader("점포 수 vs 매출액")
+                fig = px.scatter(merged_df, x="점포_수", y="당월_매출_금액", hover_name="행정동_코드_명", size='당월_매출_금액', color='점포당_매출액',
+                                 color_continuous_scale='Plasma', labels={"점포당_매출액": "점포당매출액"},
+                                 hover_data={'점포당_매출액': ':,.0f'})
+                st.plotly_chart(fig, use_container_width=True)
+        with tab2:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.subheader("점포 수 상위")
+                df_sorted = merged_df.sort_values("점포_수", ascending=False).head(15)
+                st.dataframe(df_sorted[['행정동_코드_명', '점포_수']], use_container_width=True)
+            with col2:
+                st.subheader("매출액 상위")
+                df_sorted = merged_df.sort_values("당월_매출_금액", ascending=False).head(15)
+                st.dataframe(df_sorted[['행정동_코드_명', '당월_매출_금액']], use_container_width=True)
             with col3:
-                st.subheader("점포 수 상위 15개 지역")
-                df_sorted = merged_df.sort_values(by="점포_수", ascending=False).head(15)
-                fig = px.bar(df_sorted, x="행정동_코드_명", y="점포_수")
-                st.plotly_chart(fig, use_container_width=True)
-            with col4:
-                st.subheader("매출액 상위 15개 지역")
-                df_sorted = merged_df.sort_values(by="당월_매출_금액", ascending=False).head(15)
-                fig = px.bar(df_sorted, x="행정동_코드_명", y="당월_매출_금액")
-                st.plotly_chart(fig, use_container_width=True)
+                # [수정/추가된 부분] 점포당 매출액 순위
+                st.subheader("점포당 매출액 상위")
+                df_sorted = merged_df.sort_values("점포당_매출액", ascending=False).head(15)
+                st.dataframe(df_sorted[['행정동_코드_명', '점포당_매출액']], use_container_width=True)
     else:
         st.warning("선택하신 분기에 해당하는 데이터가 없습니다.")
 
@@ -110,7 +109,7 @@ else:
     col1.metric("☕ 점포 수", f"{int(dong_data['점포_수'])}개")
     col2.metric("🚶 총 유동인구", f"{int(dong_data['총_유동인구_수']):,}명")
     col3.metric("💰 총 매출액", f"{dong_data['당월_매출_금액']:,.0f} 원")
-    # [추가된 부분] 점포당 평균 매출액 지표
+    # [수정/추가된 부분] 점포당 매출액 지표 명확히 표시
     sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
     col4.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
     st.divider()
