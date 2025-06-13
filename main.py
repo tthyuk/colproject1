@@ -14,7 +14,7 @@ def load_data():
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
         # [추가된 부분] 위치 정보 데이터 로딩 (cp949 인코딩 시도)
-        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='euc-kr') 
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='utf-8') 
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
         return None, None, None, None
