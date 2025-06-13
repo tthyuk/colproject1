@@ -13,7 +13,6 @@ def load_data():
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
-        # [추가된 부분] 위치 정보 데이터 로딩 (cp949 인코딩 시도)
         geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='utf-8') 
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
@@ -27,17 +26,13 @@ def load_data():
     
     return coffee_store_df, pop_df, coffee_sales_df, geo_df
 
-# [수정된 부분] geo_df 추가
 coffee_df, pop_df, sales_df, geo_df = load_data()
 
-# [수정된 부분] geo_df 로딩 실패 시 앱 중지
 if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
     st.stop()
 
 # --- 데이터 전처리 ---
 pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
-
-# [추가된 부분] 위치 정보 데이터 전처리 (필요한 컬럼만 선택)
 geo_df = geo_df[['행정동_코드_명', '위도', '경도']]
 
 
@@ -60,8 +55,6 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
-
-# [추가된 부분] 위치 정보 병합 (left join 사용)
 merged_df = pd.merge(merged_df, geo_df, on='행정동_코드_명', how='left')
 
 
@@ -87,6 +80,7 @@ selected_dong = st.sidebar.selectbox(
 
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
+    # (전체 분석 코드는 변경 없음)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -131,18 +125,45 @@ else:
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
-    # [추가된 부분] 지도 표시 기능
+    # [수정된 부분] Plotly를 이용한 지도 표시 기능
     st.subheader("📍 행정동 위치")
-    # 위도, 경도 정보가 있는지 확인
     if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
-        # st.map은 'lat', 'lon' 컬럼명을 가진 데이터프레임을 요구
-        map_data = pd.DataFrame({
-            'lat': [dong_data['위도']],
-            'lon': [dong_data['경도']]
-        })
-        st.map(map_data, zoom=14) # zoom 레벨로 확대/축소 조절
+        # Mapbox 토큰 설정 (Streamlit Secrets에서 가져오기)
+        try:
+            px.set_mapbox_access_token(st.secrets["MAPBOX_TOKEN"])
+            
+            map_data = pd.DataFrame({
+                'lat': [dong_data['위도']],
+                'lon': [dong_data['경도']],
+                'name': [dong_data['행정동_코드_명']]
+            })
+
+            fig = px.scatter_mapbox(
+                map_data,
+                lat="lat",
+                lon="lon",
+                text="name", # 지도에 표시될 텍스트
+                zoom=13,
+                height=400,
+                mapbox_style="carto-positron" # 지도 스타일
+            )
+            # 텍스트가 잘 보이도록 마커 스타일 조정
+            fig.update_traces(marker_size=10, marker_opacity=0.7)
+            # 텍스트 위치 및 레이아웃 여백 조정
+            fig.update_layout(
+                textfont=dict(size=14, color='black'),
+                margin={"r":0,"t":20,"l":0,"b":0},
+                mapbox=dict(
+                    center=dict(lat=dong_data['위도'], lon=dong_data['경도'])
+                )
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"지도 표시 중 오류가 발생했습니다. Mapbox 토큰이 올바르게 설정되었는지 확인해주세요. (오류: {e})")
     else:
         st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
+    # [수정된 부분 끝]
 
     st.divider()
 
@@ -156,6 +177,7 @@ else:
     st.divider()
 
     st.subheader("📊 유동인구 vs 매출 비교 분석")
+    # (이하 상세 분석 차트 코드는 변경 없음)
     tab_age, tab_gender, tab_time, tab_day = st.tabs(["연령대별", "성별", "시간대별", "요일별"])
     
     def get_grouped_data(prefix, pop_cols, sales_cols):
