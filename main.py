@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import folium # 지도 라이브러리
-from streamlit_folium import st_folium # Streamlit에서 folium을 사용하기 위한 라이브러리
+import folium
+from folium.features import DivIcon # 이모지 아이콘을 위해 추가
+from streamlit_folium import st_folium
 
 # 페이지 레이아웃을 넓게 사용하도록 설정
 st.set_page_config(layout="wide")
@@ -123,11 +124,10 @@ else:
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
-    # [수정된 부분] 주요 지표와 지도를 st.columns를 이용해 나란히 배치
     st.subheader("⭐ 주요 지표 및 위치")
-    col1, col2 = st.columns([2, 1]) # 2:1 비율로 컬럼 분할
+    col1, col2 = st.columns([2, 1]) 
 
-    with col1: # 왼쪽 컬럼 (주요 지표)
+    with col1: 
         c1, c2 = st.columns(2)
         c1.metric("☕ 점포 수", f"{int(dong_data['점포_수'])}개")
         c2.metric("🚶 총 유동인구", f"{int(dong_data['총_유동인구_수']):,}명")
@@ -135,22 +135,28 @@ else:
         sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
         c2.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
 
-    with col2: # 오른쪽 컬럼 (지도)
+    with col2: 
         if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
             lat, lon = dong_data['위도'], dong_data['경도']
             
-            # folium 지도를 생성
             m = folium.Map(location=[lat, lon], zoom_start=15)
             
-            # 마커(Marker)에 popup(클릭 시 표시되는 메시지)으로 행정동 이름 표시
+            # [개선된 부분] 이모지를 마커로 사용하기 위해 DivIcon 생성
+            icon_html = '<div style="font-size: 24px;">☕</div>'
+            
             folium.Marker(
-                [lat, lon], 
+                [lat, lon],
+                icon=DivIcon(
+                    icon_size=(30, 30),
+                    icon_anchor=(15, 15), # 이모지의 중심이 좌표에 오도록 설정
+                    html=icon_html
+                ),
                 popup=folium.Popup(f'<b>{selected_dong}</b>', max_width=200),
-                tooltip=selected_dong # 마우스를 올렸을 때 표시되는 툴팁
+                tooltip=selected_dong 
             ).add_to(m)
 
-            # Streamlit에 folium 지도 표시
-            st_folium(m, use_container_width=True, height=250)
+            # [개선된 부분] 지도의 높이를 줄여서 아래쪽 빈 공간 최소화
+            st_folium(m, use_container_width=True, height=200)
         else:
             st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
     
