@@ -8,23 +8,35 @@ st.set_page_config(layout="wide")
 # --- 데이터 로딩 (캐싱 사용) ---
 @st.cache_data
 def load_data():
-    """점포, 유동인구, 매출 데이터를 로드하고 커피 업종만 필터링합니다."""
+    """점포, 유동인구, 매출, 그리고 위경도 좌표 데이터를 로드하고 커피 업종만 필터링합니다."""
     try:
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
+        # ### 추가된 부분 1: 위경도 데이터 로딩 ###
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='euc-kr')
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
-        return None, None, None
+        # ### 수정된 부분 1: 반환값 개수 수정 ###
+        return None, None, None, None
     
     coffee_store_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
     coffee_sales_df = sales_df[sales_df["서비스_업종_코드_명"] == "커피-음료"]
     
-    return coffee_store_df, pop_df, coffee_sales_df
+    # ### 추가된 부분 2: 위경도 데이터 전처리 ###
+    # 1. 서울시 데이터만 필터링
+    seoul_geo_df = geo_df[geo_df['시도'] == '서울특별시']
+    # 2. 필요한 컬럼만 선택하고, '읍/면/리/동' 컬럼명을 다른 데이터와 맞추기 위해 '행정동_코드_명'으로 변경
+    seoul_geo_df = seoul_geo_df[['읍/면/리/동', '위도', '경도']].rename(columns={'읍/면/리/동': '행정동_코드_명'})
+    
+    # ### 수정된 부분 2: 전처리된 위경도 데이터프레임 반환 ###
+    return coffee_store_df, pop_df, coffee_sales_df, seoul_geo_df
 
-coffee_df, pop_df, sales_df = load_data()
+# ### 수정된 부분 3: 4개의 데이터프레임을 받도록 수정 ###
+coffee_df, pop_df, sales_df, geo_df = load_data()
 
-if coffee_df is None or pop_df is None or sales_df is None:
+# ### 수정된 부분 4: geo_df에 대한 None 체크 추가 ###
+if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
     st.stop()
 
 # --- 데이터 전처리 ---
@@ -51,21 +63,22 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
+# ### 추가된 부분 3: 최종 병합 데이터에 위경도 정보 추가 ###
+# 'left' merge를 사용하여 위경도 정보가 없는 행정동이 분석에서 제외되지 않도록 함
+merged_df = pd.merge(merged_df, geo_df, on='행정동_코드_명', how='left')
+
 
 # --- [개선된 부분] 행정동 검색 기능 ---
 st.sidebar.divider()
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 
-# 1. 텍스트 입력으로 검색어 받기
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
 
-# 2. 검색어로 목록 필터링
 if search_term:
     filtered_dong_list = [dong for dong in full_dong_list if search_term in dong]
 else:
     filtered_dong_list = full_dong_list
 
-# 3. 필터링된 목록을 Selectbox에 표시 (항상 '전체' 옵션 포함)
 display_list = ["전체"] + filtered_dong_list
 selected_dong = st.sidebar.selectbox(
     "행정동을 선택하세요", 
@@ -118,8 +131,21 @@ else:
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
-    # (이하 상세 분석 코드는 이전과 동일)
-    dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
+    # ### 추가된 부분 4: 지도 표시 기능 ###
+    dong_data_full = merged_df[merged_df['행정동_코드_명'] == selected_dong]
+    
+    # 위경도 데이터가 있는지 확인
+    if not dong_data_full.empty and '위도' in dong_data_full.columns and pd.notna(dong_data_full['위도'].iloc[0]):
+        # st.map은 'lat', 'lon' 컬럼명을 사용하므로, 컬럼명을 변경해줌
+        map_data = dong_data_full[['위도', '경도']].rename(columns={'위도': 'lat', '경도': 'lon'})
+        st.subheader("📍 행정동 위치")
+        st.map(map_data, zoom=14) # zoom 레벨은 조절 가능
+        st.divider()
+    else:
+        st.warning(f"'{selected_dong}'의 위치 정보를 찾을 수 없습니다.")
+
+    # (이하 상세 분석 코드는 이전과 거의 동일)
+    dong_data = dong_data_full.iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
     st.subheader("⭐ 주요 지표")
