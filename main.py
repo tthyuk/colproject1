@@ -57,18 +57,31 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
-# --- 좌표 데이터 병합 ---
+
+# --- [핵심 수정] 좌표 데이터 병합 ---
 geo_to_merge = geo_seoul_df[['행정동_코드_명', 'latitude', 'longitude']]
 
-# [오류 수정 지점] merge 전, 키 컬럼의 타입을 문자열로 통일하고 공백을 제거합니다.
-merged_df['행정동_코드_명'] = merged_df['행정동_코드_명'].astype(str).str.strip()
-geo_to_merge['행정동_코드_명'] = geo_to_merge['행정동_코드_명'].astype(str).str.strip()
+# 1. (데이터 이름 불일치 문제 해결) 상권 데이터의 행정동 이름 표준화
+#    '역삼1동', '상계제10동', '가락본동' 등을 '역삼동', '상계동', '가락동' 등으로 변경하여
+#    좌표 데이터의 행정동 이름과 일치시킵니다.
+#    정규식을 사용하여 숫자, '제', '본', '.' 문자를 모두 제거합니다.
+merged_df['행정동_코드_명_표준'] = merged_df['행정동_코드_명'].str.replace(r'(\.|\d+|제|본$)', '', regex=True)
+geo_to_merge['행정동_코드_명_표준'] = geo_to_merge['행정동_코드_명'].str.replace(r'(\.|\d+|제|본$)', '', regex=True)
 
-merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명', how='left')
+
+# 2. (ValueError 방지) merge 전, 표준화된 키 컬럼의 타입을 문자열로 통일하고 공백을 제거합니다.
+merged_df['행정동_코드_명_표준'] = merged_df['행정동_코드_명_표준'].astype(str).str.strip()
+geo_to_merge['행정동_코드_명_표준'] = geo_to_merge['행정동_코드_명_표준'].astype(str).str.strip()
+
+# 3. 표준화된 '행정동_코드_명_표준'을 기준으로 merge를 수행합니다.
+merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명_표준', how='left')
+# 임시로 사용한 표준화 컬럼은 삭제하여 데이터를 깔끔하게 유지합니다.
+merged_df.drop(columns=['행정동_코드_명_표준'], inplace=True)
 
 
 # --- 행정동 검색 기능 ---
 st.sidebar.divider()
+# 원본 행정동 이름으로 목록을 보여줍니다.
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
@@ -88,7 +101,6 @@ selected_dong = st.sidebar.selectbox(
 
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
-    # (이 부분은 변경 없음)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -130,6 +142,7 @@ else:
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
+    # 사용자가 선택한 원본 행정동 이름으로 데이터를 찾습니다.
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
