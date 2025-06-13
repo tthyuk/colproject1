@@ -8,51 +8,37 @@ st.set_page_config(layout="wide")
 # --- 데이터 로딩 (캐싱 사용) ---
 @st.cache_data
 def load_data():
-    """점포, 유동인구, 매출, 그리고 위경도 좌표 데이터를 로드하고 커피 업종만 필터링합니다."""
+    """점포, 유동인구, 매출, 위치 데이터를 로드하고 커피 업종만 필터링합니다."""
     try:
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
-        
-        encodings_to_try = ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']
-        geo_df = None
-        for encoding in encodings_to_try:
-            try:
-                geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding=encoding)
-                break 
-            except UnicodeDecodeError:
-                continue 
-
-        if geo_df is None:
-            st.error("'행정구역별_위경도_좌표.csv' 파일의 인코딩을 찾지 못했습니다. 파일 형식을 확인해주세요.")
-            return None, None, None, None
-
+        # [추가된 부분] 위치 정보 데이터 로딩 (cp949 인코딩 시도)
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='cp949') 
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
         return None, None, None, None
-        
+    except UnicodeDecodeError:
+        st.error("행정구역별_위경도_좌표.csv 파일의 인코딩을 확인해주세요. 'euc-kr' 또는 'utf-8'로 시도해보세요.")
+        return None, None, None, None
+
     coffee_store_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
     coffee_sales_df = sales_df[sales_df["서비스_업종_코드_명"] == "커피-음료"]
     
-    # 위경도 데이터 전처리
-    seoul_geo_df = geo_df[geo_df['시도'] == '서울특별시']
-    seoul_geo_df = seoul_geo_df[['읍/면/리/동', '위도', '경도']].rename(columns={'읍/면/리/동': '행정동_코드_명'})
-    
-    # ### 수정된 부분 1: 중복된 행정동 데이터 제거 (안정성 확보) ###
-    # '행정동_코드_명'을 기준으로 중복된 행이 있다면 첫 번째 값만 남기고 제거합니다.
-    seoul_geo_df.drop_duplicates(subset=['행정동_코드_명'], keep='first', inplace=True)
-    
-    return coffee_store_df, pop_df, sales_df, seoul_geo_df
+    return coffee_store_df, pop_df, coffee_sales_df, geo_df
 
-# 데이터 로딩 실행
+# [수정된 부분] geo_df 추가
 coffee_df, pop_df, sales_df, geo_df = load_data()
 
-# 로딩 실패 시 앱 중단
+# [수정된 부분] geo_df 로딩 실패 시 앱 중지
 if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
     st.stop()
 
 # --- 데이터 전처리 ---
 pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
+
+# [추가된 부분] 위치 정보 데이터 전처리 (필요한 컬럼만 선택)
+geo_df = geo_df[['행정동_코드_명', '위도', '경도']]
 
 
 # --- 사이드바 ---
@@ -75,12 +61,7 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
-# ### 수정된 부분 2: 병합 전 데이터 타입 통일 (오류 해결) ###
-# ValueError 방지를 위해 두 데이터프레임의 '행정동_코드_명' 컬럼을 모두 문자열(str)로 변환합니다.
-merged_df['행정동_코드_명'] = merged_df['행정동_코드_명'].astype(str)
-geo_df['행정동_코드_명'] = geo_df['행정동_코드_명'].astype(str)
-
-# 최종 병합 데이터에 위경도 정보 추가
+# [추가된 부분] 위치 정보 병합 (left join 사용)
 merged_df = pd.merge(merged_df, geo_df, on='행정동_코드_명', how='left')
 
 
@@ -147,19 +128,23 @@ else:
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
-    dong_data_full = merged_df[merged_df['행정동_코드_명'] == selected_dong]
-    
-    # 위경도 데이터가 있는지 확인
-    if not dong_data_full.empty and '위도' in dong_data_full.columns and pd.notna(dong_data_full['위도'].iloc[0]):
-        map_data = dong_data_full[['위도', '경도']].rename(columns={'위도': 'lat', '경도': 'lon'})
-        st.subheader("📍 행정동 위치")
-        st.map(map_data, zoom=14) 
-        st.divider()
-    else:
-        st.warning(f"'{selected_dong}'의 위치 정보를 찾을 수 없습니다.")
-
-    dong_data = dong_data_full.iloc[0]
+    dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
+
+    # [추가된 부분] 지도 표시 기능
+    st.subheader("📍 행정동 위치")
+    # 위도, 경도 정보가 있는지 확인
+    if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
+        # st.map은 'lat', 'lon' 컬럼명을 가진 데이터프레임을 요구
+        map_data = pd.DataFrame({
+            'lat': [dong_data['위도']],
+            'lon': [dong_data['경도']]
+        })
+        st.map(map_data, zoom=14) # zoom 레벨로 확대/축소 조절
+    else:
+        st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
+
+    st.divider()
 
     st.subheader("⭐ 주요 지표")
     col1, col2, col3, col4 = st.columns(4)
