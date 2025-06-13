@@ -2,36 +2,29 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import json
-from pyproj import Proj, transform # 좌표 변환을 위한 라이브러리
+from pyproj import Proj, transform
 
 # --- 1. 초기 설정 ---
-
-# 페이지 레이아웃을 넓게 사용하도록 설정
 st.set_page_config(layout="wide")
 
-# [필수] Mapbox 접근 토큰을 여기에 입력하세요.
-# https://www.mapbox.com/ 에서 무료로 발급받을 수 있습니다.
 MAPBOX_TOKEN = "YOUR_MAPBOX_ACCESS_TOKEN"  # <--- 여기에 본인의 토큰을 붙여넣으세요!
 if MAPBOX_TOKEN == "YOUR_MAPBOX_ACCESS_TOKEN":
     st.warning("Mapbox 접근 토큰을 입력해야 지도가 표시됩니다.")
 px.set_mapbox_access_token(MAPBOX_TOKEN)
 
 # --- 2. 함수 정의 ---
-
 def convert_coords(x, y):
-    """TM 좌표계(EPSG:5179)를 WGS84 위도/경도 좌표계(EPSG:4326)로 변환합니다."""
     try:
-        # TM 중부원점(Bessel) -> WGS84
         proj_in = Proj(init='epsg:5179')
         proj_out = Proj(init='epsg:4326')
         lon, lat = transform(proj_in, proj_out, x, y)
         return lat, lon
-    except:
-        return None, None # 변환 실패 시 None 반환
+    except Exception:
+        return None, None
 
 @st.cache_data
 def load_data():
-    """점포, 유동인구, 매출, 그리고 행정동 좌표 데이터를 로드하고 전처리합니다."""
+    """데이터를 로드하고, 모든 '행정동_코드' 타입을 문자열로 통일합니다."""
     try:
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
@@ -40,22 +33,25 @@ def load_data():
             area_json_data = json.load(f)
     except FileNotFoundError as e:
         st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 파일이 올바른 위치에 있는지 확인해주세요.")
-        return None, None
-    
-    # 커피 업종 필터링
+        return None, None, None, None, None
+
+    # [수정된 부분] 모든 데이터프레임의 '행정동_코드'를 문자열로 통일
+    store_df['행정동_코드'] = store_df['행정동_코드'].astype(str)
+    pop_df['행정동_코드'] = pop_df['행정동_코드'].astype(str)
+    sales_df['행정동_코드'] = sales_df['행정동_코드'].astype(str)
+
     coffee_store_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
     coffee_sales_df = sales_df[sales_df["서비스_업종_코드_명"] == "커피-음료"]
     
-    # 유동인구 데이터 집계
     pop_agg_df = pop_df.groupby(['기준_년분기_코드', '행정동_코드', '행정동_코드_명'])['총_유동인구_수'].sum().reset_index()
     
-    # 좌표 데이터 DataFrame 변환 및 좌표 변환
     area_df = pd.DataFrame(area_json_data['DATA'])
     area_df = area_df.rename(columns={'adstrd_cd': '행정동_코드'})
+    area_df['행정동_코드'] = area_df['행정동_코드'].astype(str) # area_df도 타입 통일
+    
     area_df[['lat', 'lon']] = area_df.apply(
         lambda row: pd.Series(convert_coords(row['xcnts_value'], row['ydnts_value'])), axis=1
     )
-
     return coffee_store_df, pop_agg_df, coffee_sales_df, area_df, pop_df
 
 # --- 3. 데이터 로드 및 전처리 ---
@@ -81,7 +77,7 @@ pop_agg_quarter_df = pop_agg_df[pop_agg_df['기준_년분기_코드'] == selecte
 sales_quarter_df = sales_df[sales_df['기준_년분기_코드'] == selected_quarter]
 pop_quarter_df = original_pop_df[original_pop_df['기준_년분기_코드'] == selected_quarter]
 
-# 3개 데이터프레임 병합
+# 병합 (이제 타입이 통일되어 오류가 발생하지 않음)
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, area_df[['행정동_코드', 'lat', 'lon']], on='행정동_코드', how='left')
@@ -90,15 +86,12 @@ merged_df = pd.merge(merged_df, area_df[['행정동_코드', 'lat', 'lon']], on=
 st.sidebar.divider()
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
-
 filtered_dong_list = [dong for dong in full_dong_list if search_term in dong] if search_term else full_dong_list
 display_list = ["전체"] + filtered_dong_list
 selected_dong = st.sidebar.selectbox("행정동을 선택하세요", display_list, help="찾고 싶은 동 이름을 검색창에 입력하세요.")
 
-
 # --- 5. 메인 화면 UI ---
-
-# 5-1. 전체 분석 화면
+# (이하 코드는 이전과 동일하며, 이제 오류 없이 실행됩니다)
 if selected_dong == "전체":
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"🗺️ 서울시 행정동별 분포 지도 (기준: {format_quarter(selected_quarter)})")
@@ -136,12 +129,13 @@ if selected_dong == "전체":
             ):
                 col.subheader(f"{label} 상위 15")
                 df_sorted = merged_df.sort_values(metric, ascending=False).head(15)
-                col.dataframe(df_sorted[['행정동_코드_명', metric]], use_container_width=True)
+                col.dataframe(df_sorted[['행정동_코드_명', metric]].style.format({metric: '{:,.0f}'}), use_container_width=True)
+
     else:
         st.warning("분석할 데이터가 없거나, 지도 좌표 정보가 부족합니다.")
 
-# 5-2. 상세 분석 화면
 else:
+    # (이하 상세 분석 코드는 이전과 동일)
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
@@ -158,7 +152,6 @@ else:
     st.divider()
 
     st.subheader("📊 유동인구 vs 매출 비교 분석")
-    # (이하 상세 분석 탭 코드는 이전과 동일)
     tab_age, tab_gender, tab_time, tab_day = st.tabs(["연령대별", "성별", "시간대별", "요일별"])
     
     def get_grouped_data(prefix, pop_cols, sales_cols):
