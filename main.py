@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import folium
-from folium.features import DivIcon # 이모지 아이콘을 위해 추가
+from folium.features import DivIcon
 from streamlit_folium import st_folium
+import json
 
 # 페이지 레이아웃을 넓게 사용하도록 설정
 st.set_page_config(layout="wide")
@@ -16,22 +17,27 @@ def load_data():
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
-        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='utf-8') 
+        geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding='cp949')
+        # [수정된 부분] 파일 이름을 'seoul_gu.geojson'으로 변경
+        with open('seoul_gu.geojson', 'r', encoding='utf-8') as f:
+            seoul_gu_geo = json.load(f)
+
     except FileNotFoundError as e:
-        st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. 모든 CSV 파일이 올바른 위치에 있는지 확인해주세요.")
-        return None, None, None, None
+        # [수정된 부분] 에러 메시지의 파일 이름도 함께 변경
+        st.error(f"데이터 파일을 찾을 수 없습니다: {e.filename}. seoul_gu.geojson 파일도 다운로드했는지 확인해주세요.")
+        return None, None, None, None, None
     except UnicodeDecodeError:
-        st.error("행정구역별_위경도_좌표.csv 파일의 인코딩을 확인해주세요. 'euc-kr' 또는 'utf-8'로 시도해보세요.")
-        return None, None, None, None
+        st.error("파일의 인코딩을 확인해주세요. 'euc-kr' 또는 'utf-8'로 시도해보세요.")
+        return None, None, None, None, None
 
     coffee_store_df = store_df[store_df["서비스_업종_코드_명"] == "커피-음료"]
     coffee_sales_df = sales_df[sales_df["서비스_업종_코드_명"] == "커피-음료"]
-    
-    return coffee_store_df, pop_df, coffee_sales_df, geo_df
 
-coffee_df, pop_df, sales_df, geo_df = load_data()
+    return coffee_store_df, pop_df, coffee_sales_df, geo_df, seoul_gu_geo
 
-if coffee_df is None or pop_df is None or sales_df is None or geo_df is None:
+coffee_df, pop_df, sales_df, geo_df, seoul_gu_geo = load_data()
+
+if any(df is None for df in [coffee_df, pop_df, sales_df, geo_df, seoul_gu_geo]):
     st.stop()
 
 # --- 데이터 전처리 ---
@@ -72,7 +78,7 @@ else:
 
 display_list = ["전체"] + filtered_dong_list
 selected_dong = st.sidebar.selectbox(
-    "행정동을 선택하세요", 
+    "행정동을 선택하세요",
     display_list,
     help="찾고 싶은 동 이름을 위 검색창에 입력하면 목록이 줄어듭니다."
 )
@@ -80,6 +86,7 @@ selected_dong = st.sidebar.selectbox(
 
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
+    # (이 부분은 변경 없음)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -120,14 +127,14 @@ else:
     # --- 2. 특정 행정동 상세 분석 화면 ---
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
-    
+
     dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
     dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
 
     st.subheader("⭐ 주요 지표 및 위치")
-    col1, col2 = st.columns([2, 1]) 
+    col1, col2 = st.columns([2, 1])
 
-    with col1: 
+    with col1:
         c1, c2 = st.columns(2)
         c1.metric("☕ 점포 수", f"{int(dong_data['점포_수'])}개")
         c2.metric("🚶 총 유동인구", f"{int(dong_data['총_유동인구_수']):,}명")
@@ -135,33 +142,41 @@ else:
         sales_per_store = dong_data['당월_매출_금액'] / dong_data['점포_수'] if dong_data['점포_수'] > 0 else 0
         c2.metric("🏪 점포당 매출액", f"{sales_per_store:,.0f} 원")
 
-    with col2: 
+    with col2:
         if pd.notna(dong_data['위도']) and pd.notna(dong_data['경도']):
             lat, lon = dong_data['위도'], dong_data['경도']
-            
-            m = folium.Map(location=[lat, lon], zoom_start=15)
-            
-            # [개선된 부분] 이모지를 마커로 사용하기 위해 DivIcon 생성
+
+            m = folium.Map(location=[lat, lon], zoom_start=14)
+
+            folium.GeoJson(
+                seoul_gu_geo,
+                name='자치구 경계',
+                style_function=lambda feature: {
+                    'fillOpacity': 0,
+                    'color': 'black',
+                    'weight': 3,
+                    'dashArray': '5, 5'
+                }
+            ).add_to(m)
+
             icon_html = '<div style="font-size: 24px;">☕</div>'
-            
             folium.Marker(
                 [lat, lon],
                 icon=DivIcon(
                     icon_size=(30, 30),
-                    icon_anchor=(15, 15), # 이모지의 중심이 좌표에 오도록 설정
+                    icon_anchor=(15, 15),
                     html=icon_html
                 ),
                 popup=folium.Popup(f'<b>{selected_dong}</b>', max_width=200),
-                tooltip=selected_dong 
+                tooltip=selected_dong
             ).add_to(m)
 
-            # [개선된 부분] 지도의 높이를 줄여서 아래쪽 빈 공간 최소화
             st_folium(m, use_container_width=True, height=200)
         else:
             st.warning("해당 행정동의 위치 정보(위/경도)를 찾을 수 없습니다.")
-    
-    st.divider()
 
+    st.divider()
+    # (이하 분석 탭 부분은 변경 없음)
     st.subheader("📊 유동인구 vs 매출 비교 분석")
     tab_age, tab_gender, tab_time, tab_day = st.tabs(["연령대별", "성별", "시간대별", "요일별"])
     
@@ -179,7 +194,6 @@ else:
         c1, c2 = st.columns(2)
         c1.plotly_chart(px.bar(pop_res, x='연령대', y='유동인구', title='연령대별 유동인구'), use_container_width=True)
         c2.plotly_chart(px.bar(sales_res, x='연령대', y='매출액', title='연령대별 매출액'), use_container_width=True)
-
     with tab_gender:
         pop_cols = {'남성_유동인구_수': '남성', '여성_유동인구_수': '여성'}
         sales_cols = {'남성_매출_금액': '남성', '여성_매출_금액': '여성'}
@@ -187,7 +201,6 @@ else:
         c1, c2 = st.columns(2)
         c1.plotly_chart(px.pie(pop_res, names='성별', values='유동인구', title='성별 유동인구', hole=0.4), use_container_width=True)
         c2.plotly_chart(px.pie(sales_res, names='성별', values='매출액', title='성별 매출액', hole=0.4), use_container_width=True)
-
     with tab_time:
         pop_cols = {'시간대_00_06_유동인구_수':'00-06시', '시간대_06_11_유동인구_수':'06-11시', '시간대_11_14_유동인구_수':'11-14시', '시간대_14_17_유동인구_수':'14-17시', '시간대_17_21_유동인구_수':'17-21시', '시간대_21_24_유동인구_수':'21-24시'}
         sales_cols = {'시간대_00~06_매출_금액':'00-06시', '시간대_06~11_매출_금액':'06-11시', '시간대_11~14_매출_금액':'11-14시', '시간대_14~17_매출_금액':'14-17시', '시간대_17~21_매출_금액':'17-21시', '시간대_21~24_매출_금액':'21-24시'}
@@ -195,7 +208,6 @@ else:
         c1, c2 = st.columns(2)
         c1.plotly_chart(px.bar(pop_res, x='시간대', y='유동인구', title='시간대별 유동인구'), use_container_width=True)
         c2.plotly_chart(px.bar(sales_res, x='시간대', y='매출액', title='시간대별 매출액'), use_container_width=True)
-
     with tab_day:
         pop_cols = {'월요일_유동인구_수':'월', '화요일_유동인구_수':'화', '수요일_유동인구_수':'수', '목요일_유동인구_수':'목', '금요일_유동인구_수':'금', '토요일_유동인구_수':'토', '일요일_유동인구_수':'일'}
         sales_cols = {'월요일_매출_금액':'월', '화요일_매출_금액':'화', '수요일_매출_금액':'수', '목요일_매출_금액':'목', '금요일_매출_금액':'금', '토요일_매출_금액':'토', '일요일_매출_금액':'일'}
