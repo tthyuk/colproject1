@@ -10,24 +10,19 @@ st.set_page_config(layout="wide")
 def load_data():
     """점포, 유동인구, 매출, 그리고 위경도 좌표 데이터를 로드하고 커피 업종만 필터링합니다."""
     try:
-        # 기존 파일들은 euc-kr로 고정
         store_df = pd.read_csv('서울시 상권분석서비스(점포-행정동).csv', encoding='euc-kr')
         pop_df = pd.read_csv('서울시 상권분석서비스(길단위인구-행정동).csv', encoding='euc-kr')
         sales_df = pd.read_csv('서울시 상권분석서비스(추정매출-행정동).csv', encoding='euc-kr')
         
-        # ### 최종 해결책: 여러 인코딩을 자동으로 시도하여 파일 로드 ###
         encodings_to_try = ['utf-8', 'cp949', 'euc-kr', 'utf-8-sig']
         geo_df = None
         for encoding in encodings_to_try:
             try:
                 geo_df = pd.read_csv('행정구역별_위경도_좌표.csv', encoding=encoding)
-                # 성공하면 반복을 중단하고 다음 코드로 넘어감
                 break 
             except UnicodeDecodeError:
-                # 실패하면 다음 인코딩으로 계속 시도
                 continue 
 
-        # 모든 인코딩 시도 후에도 geo_df가 None이면 파일 로딩 실패
         if geo_df is None:
             st.error("'행정구역별_위경도_좌표.csv' 파일의 인코딩을 찾지 못했습니다. 파일 형식을 확인해주세요.")
             return None, None, None, None
@@ -42,6 +37,10 @@ def load_data():
     # 위경도 데이터 전처리
     seoul_geo_df = geo_df[geo_df['시도'] == '서울특별시']
     seoul_geo_df = seoul_geo_df[['읍/면/리/동', '위도', '경도']].rename(columns={'읍/면/리/동': '행정동_코드_명'})
+    
+    # ### 수정된 부분 1: 중복된 행정동 데이터 제거 (안정성 확보) ###
+    # '행정동_코드_명'을 기준으로 중복된 행이 있다면 첫 번째 값만 남기고 제거합니다.
+    seoul_geo_df.drop_duplicates(subset=['행정동_코드_명'], keep='first', inplace=True)
     
     return coffee_store_df, pop_df, sales_df, seoul_geo_df
 
@@ -75,6 +74,11 @@ pop_quarter_df = pop_df[pop_df['기준_년분기_코드'] == selected_quarter]
 
 merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='inner')
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
+
+# ### 수정된 부분 2: 병합 전 데이터 타입 통일 (오류 해결) ###
+# ValueError 방지를 위해 두 데이터프레임의 '행정동_코드_명' 컬럼을 모두 문자열(str)로 변환합니다.
+merged_df['행정동_코드_명'] = merged_df['행정동_코드_명'].astype(str)
+geo_df['행정동_코드_명'] = geo_df['행정동_코드_명'].astype(str)
 
 # 최종 병합 데이터에 위경도 정보 추가
 merged_df = pd.merge(merged_df, geo_df, on='행정동_코드_명', how='left')
