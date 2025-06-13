@@ -58,27 +58,66 @@ merged_df = pd.merge(coffee_quarter_df, pop_agg_quarter_df, on=merge_keys, how='
 merged_df = pd.merge(merged_df, sales_quarter_df, on=merge_keys, how='inner')
 
 
-# --- [핵심 수정] 좌표 데이터 병합 ---
-
+# --- 좌표 데이터 병합 ---
 # 1. 각 데이터프레임에 표준화된 행정동 이름 컬럼을 생성합니다.
-merged_df['행정동_코드_명_표준'] = merged_df['행정동_코드_명'].astype(str).str.replace(r'(\.|\d+|제|본$)', '', regex=True).str.strip()
-geo_seoul_df['행정동_코드_명_표준'] = geo_seoul_df['행정동_코드_명'].astype(str).str.replace(r'(\.|\d+|제|본$)', '', regex=True).str.strip()
+#    [중요!] 이 정규식이 현재 문제의 핵심입니다.
+#    현재 규칙: 점(.), 숫자, '제', '본'으로 끝나는 단어를 제거합니다.
+#    추가 규칙이 필요할 수 있습니다.
+current_regex = r'(\.|\d+|제|본$)'
+merged_df['행정동_코드_명_표준'] = merged_df['행정동_코드_명'].astype(str).str.replace(current_regex, '', regex=True).str.strip()
+geo_seoul_df['행정동_코드_명_표준'] = geo_seoul_df['행정동_코드_명'].astype(str).str.replace(current_regex, '', regex=True).str.strip()
 
 # 2. merge할 오른쪽 데이터프레임(geo_to_merge)을 재구성합니다.
-#    **중요**: 중복되는 '행정동_코드_명' 컬럼을 제외하고, 병합에 필요한 컬럼만 선택합니다.
-#    이렇게 하면 merge 시 '_x', '_y' 접미사가 붙는 것을 방지할 수 있습니다.
 geo_to_merge = geo_seoul_df[['행정동_코드_명_표준', 'latitude', 'longitude']]
 
-# 3. 표준화된 키를 기준으로 merge를 수행합니다.
-merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명_표준', how='left')
+# 3. 중복된 표준화 이름이 있을 경우, 첫 번째 값만 남깁니다. (예: 좌표 데이터에 '역삼동'이 여러개 있는 경우)
+geo_to_merge.drop_duplicates(subset=['행정동_코드_명_표준'], keep='first', inplace=True)
 
-# 4. merge에 사용한 임시 컬럼은 삭제하여 데이터를 깔끔하게 유지합니다.
+# 4. 표준화된 키를 기준으로 merge를 수행합니다.
+merged_df = pd.merge(merged_df, geo_to_merge, on='행정동_코드_명_표준', how='left')
 merged_df.drop(columns=['행정동_코드_명_표준'], inplace=True)
 
 
+# --- [디버깅 기능 추가] ---
+st.sidebar.divider()
+if st.sidebar.checkbox("데이터 불일치 원인 분석하기"):
+    st.subheader("⚠️ 데이터 불일치 분석")
+    
+    # 1. merge에 실패한 (좌표가 없는) 행정동 목록 추출
+    unmatched_df = merged_df[merged_df['latitude'].isna()]
+    unmatched_dongs = unmatched_df['행정동_코드_명'].unique()
+    
+    if len(unmatched_dongs) > 0:
+        st.warning(f"총 {len(unmatched_dongs)}개의 행정동 좌표를 찾지 못했습니다. 두 데이터의 이름이 다른 것이 원인일 가능성이 높습니다.")
+        
+        # 2. 비교를 위해 데이터 샘플 표시
+        col1, col2 = st.columns(2)
+        with col1:
+            st.error("좌표를 찾지 못한 행정동 이름 (상권 데이터 기준)")
+            st.dataframe(pd.DataFrame(unmatched_dongs, columns=["행정동 이름"]))
+            
+        with col2:
+            st.info("전체 행정동 이름 (좌표 데이터 기준)")
+            st.dataframe(pd.DataFrame(geo_seoul_df['행정동_코드_명'].unique(), columns=["행정동 이름"]))
+            
+        st.markdown(f"""
+        ---
+        #### 해결 방법
+        1.  **위 두 목록을 비교하여 이름이 어떻게 다른지 패턴을 찾아보세요.**
+            - **예시 1**: 상권 데이터(`면목3.8동`) vs 좌표 데이터(`면목제3동`, `면목제8동`)
+            - **예시 2**: 상권 데이터(`신사동`) vs 좌표 데이터(`신사동(강남구)`)
+        2.  새로운 패턴이 발견되면, 코드의 `current_regex = r'...'` 부분을 수정해야 합니다.
+            - 예를 들어 `(강남구)` 같은 괄호와 내용을 지우려면, 정규식에 `\([^)]*\)`를 추가합니다. 
+            - 수정 예: `current_regex = r'(\.|\d+|제|본$|\([^)]*\))'`
+        3.  수정할 패턴을 찾으시면 저에게 알려주시거나 직접 수정해 보세요.
+        
+        현재 적용된 정규식: `{current_regex}`
+        """)
+    else:
+        st.success("모든 행정동의 좌표를 성공적으로 찾았습니다! 🎉")
+
 # --- 행정동 검색 기능 ---
 st.sidebar.divider()
-# 이제 '행정동_코드_명' 컬럼이 정상적으로 존재하므로 에러가 발생하지 않습니다.
 full_dong_list = sorted(merged_df['행정동_코드_명'].unique())
 
 search_term = st.sidebar.text_input("행정동 검색", placeholder="예: 역삼, 신사, 명동")
@@ -98,6 +137,7 @@ selected_dong = st.sidebar.selectbox(
 
 # --- UI 분기: 전체 vs 상세 ---
 if selected_dong == "전체":
+    # (이하 코드는 이전과 동일)
     st.title("☕ 커피-음료 업종 전체 동향 분석")
     st.subheader(f"📈 전체 행정동 비교 분석 (기준: {format_quarter(selected_quarter)})")
     
@@ -139,8 +179,17 @@ else:
     st.title(f"🔍 {selected_dong} 상세 분석")
     st.subheader(f"(기준: {format_quarter(selected_quarter)})")
     
-    dong_data = merged_df[merged_df['행정동_코드_명'] == selected_dong].iloc[0]
-    dong_pop_data = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
+    dong_data_list = merged_df[merged_df['행정동_코드_명'] == selected_dong]
+    if dong_data_list.empty:
+        st.error(f"'{selected_dong}'에 대한 데이터를 찾을 수 없습니다.")
+        st.stop()
+    dong_data = dong_data_list.iloc[0]
+
+    pop_data_list = pop_quarter_df[pop_quarter_df['행정동_코드_명'] == selected_dong]
+    if pop_data_list.empty:
+        st.error(f"'{selected_dong}'에 대한 유동인구 데이터를 찾을 수 없습니다.")
+        st.stop()
+    dong_pop_data = pop_data_list
 
     st.subheader("⭐ 주요 지표")
     col1, col2, col3, col4 = st.columns(4)
